@@ -3,10 +3,11 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app.cache import SearchCache
 from app.config import get_settings
 from app.db import read_conn
 from app.ingest.chunk import stitch_text
@@ -35,6 +36,7 @@ class SearchResult(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     took_ms: float
+    cached: bool
     results: list[SearchResult]
 
 
@@ -69,11 +71,18 @@ class DocumentDetail(BaseModel):
     chunks: list[ChunkLocation]
 
 
+class CacheStats(BaseModel):
+    hits: int
+    misses: int
+    hit_rate: float
+
+
 class Stats(BaseModel):
     documents: dict[str, int]
     chunks: int
     index_version: int
     embedding_model: str | None
+    search_cache: CacheStats
 
 
 @router.get("/")
@@ -105,32 +114,62 @@ async def health(request: Request) -> dict:
     return {"status": "ok", **checks}
 
 
+async def load_index_version() -> int:
+    async with read_conn() as conn:
+        result = await conn.execute(text("SELECT version FROM index_state WHERE id = 1"))
+        return int(result.scalar_one())
+
+
 @router.get("/search", response_model=SearchResponse)
 async def search(
     request: Request,
+    response: Response,
     q: str = Query(min_length=1, max_length=500),
     limit: int = Query(10, ge=1, le=50),
 ) -> SearchResponse:
     started = time.perf_counter()
     settings = get_settings()
+    cache: SearchCache = request.app.state.cache
+    embedder = request.app.state.embedder
     query = " ".join(q.split())
 
-    vector = await request.app.state.embedder.embed_query(query)
+    def done(results: list[dict], cached: bool) -> SearchResponse:
+        response.headers["X-Cache"] = "HIT" if cached else "MISS"
+        return SearchResponse(
+            query=query,
+            took_ms=round((time.perf_counter() - started) * 1000, 1),
+            cached=cached,
+            results=[SearchResult(**r) for r in results],
+        )
+
+    # 1. Whole result cached for this index version?
+    version = await cache.index_version(load_index_version)
+    key = cache.search_key(
+        version,
+        {"q": query, "limit": limit, "k": settings.rrf_k, "n": settings.search_candidates},
+    )
+    if (cached := await cache.get_search(key)) is not None:
+        return done(cached, cached=True)
+
+    # 2. Query embedding cached? (the slowest step: a model call)
+    vector = await cache.get_embedding(embedder.model, query)
+    if vector is None:
+        vector = to_pgvector(await embedder.embed_query(query))
+        await cache.set_embedding(embedder.model, query, vector)
+
+    # 3. Run the hybrid search on the read connection.
     async with read_conn() as conn:
         hits = await hybrid_search(
             conn,
             query,
-            to_pgvector(vector),
+            vector,
             limit=limit,
             candidates=settings.search_candidates,
             rrf_k=settings.rrf_k,
         )
-
-    return SearchResponse(
-        query=query,
-        took_ms=round((time.perf_counter() - started) * 1000, 1),
-        results=[SearchResult(**asdict(h)) for h in hits],
-    )
+    results = [asdict(h) for h in hits]
+    await cache.set_search(key, results)
+    return done(results, cached=False)
 
 
 @router.get("/documents", response_model=list[DocumentOut])
@@ -193,7 +232,7 @@ async def document_detail(document_id: int) -> DocumentDetail:
 
 
 @router.get("/stats", response_model=Stats)
-async def stats() -> Stats:
+async def stats(request: Request) -> Stats:
     async with read_conn() as conn:
         by_status = await conn.execute(
             text("SELECT status, count(*) FROM documents GROUP BY status")
@@ -212,4 +251,5 @@ async def stats() -> Stats:
         chunks=state.chunks,
         index_version=state.version,
         embedding_model=state.embedding_model,
+        search_cache=CacheStats(**await request.app.state.cache.hit_rate()),
     )

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request, Response
 from redis.asyncio import Redis
 
 from app.api.routes import router
+from app.cache import SearchCache
 from app.config import get_settings
 from app.db import dispose_engines
 from app.ingest.embed import make_provider
@@ -18,7 +19,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     app.state.embedder = make_provider(settings)
-    app.state.redis = Redis.from_url(settings.redis_url)
+    app.state.redis = Redis.from_url(settings.redis_url, socket_timeout=0.5)
+    app.state.cache = SearchCache(app.state.redis, settings.search_cache_ttl_seconds)
     yield
     await app.state.embedder.close()
     await app.state.redis.aclose()

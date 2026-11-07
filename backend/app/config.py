@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     chunk_tokens: int = 500
     chunk_overlap_tokens: int = 50
 
+    search_cache_ttl_seconds: int = 600
     search_candidates: int = 50  # top-N from each retriever before fusion
     rrf_k: int = 60  # standard RRF constant
 

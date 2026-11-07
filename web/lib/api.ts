@@ -20,6 +20,8 @@ export type SearchResult = {
 export type SearchResponse = {
   query: string;
   took_ms: number;
+  /** true when the whole result came from the Redis cache */
+  cached: boolean;
   results: SearchResult[];
 };
 

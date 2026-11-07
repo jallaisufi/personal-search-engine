@@ -10,11 +10,13 @@ import httpx
 import pytest
 from sqlalchemy import text
 
+from app.cache import SearchCache
 from app.config import get_settings
 from app.db import read_conn, write_conn
 from app.ingest.embed import FakeProvider
 from app.main import app
 from app.worker import check_embedding_model, ensure_local_source, sync_once
+from tests.fakes import InMemoryRedis
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]
 
@@ -32,22 +34,25 @@ async def indexed(tmp_path_factory, sample_docs):
     provider = FakeProvider(settings.embedding_dim)
     await check_embedding_model(provider)
     source_id = await ensure_local_source()
-    changed = await sync_once(source_id, root, provider, settings)
-    return {"root": root, "source_id": source_id, "provider": provider, "changed": changed}
+    redis = InMemoryRedis()
+    changed = await sync_once(source_id, root, provider, settings, redis)
+    return {
+        "root": root,
+        "source_id": source_id,
+        "provider": provider,
+        "redis": redis,
+        "changed": changed,
+    }
 
 
 @pytest.fixture(scope="module")
 async def client(indexed):
     app.state.embedder = indexed["provider"]
-    app.state.redis = FakeRedis()
+    app.state.redis = indexed["redis"]
+    app.state.cache = SearchCache(indexed["redis"], search_ttl_seconds=600)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
-
-
-class FakeRedis:
-    async def ping(self) -> bool:
-        return True
 
 
 async def test_all_sample_documents_indexed(indexed, sample_docs):
@@ -84,7 +89,9 @@ async def test_snippets_are_html_safe(indexed, client):
     evil = indexed["root"] / "evil.md"
     evil.write_text("# Note\n\n<script>alert('xss')</script> quarterly budget")
     settings = get_settings()
-    await sync_once(indexed["source_id"], indexed["root"], indexed["provider"], settings)
+    await sync_once(
+        indexed["source_id"], indexed["root"], indexed["provider"], settings, indexed["redis"]
+    )
 
     resp = await client.get("/search", params={"q": "quarterly budget"})
     hit = next(r for r in resp.json()["results"] if r["path"] == "evil.md")
@@ -94,7 +101,9 @@ async def test_snippets_are_html_safe(indexed, client):
 
 async def test_resync_without_changes_is_a_noop(indexed):
     settings = get_settings()
-    changed = await sync_once(indexed["source_id"], indexed["root"], indexed["provider"], settings)
+    changed = await sync_once(
+        indexed["source_id"], indexed["root"], indexed["provider"], settings, indexed["redis"]
+    )
     assert changed == 0
 
 
@@ -119,7 +128,9 @@ async def test_identical_chunks_reuse_embeddings(indexed):
 async def test_deleted_files_are_removed(indexed, client):
     (indexed["root"] / "finance" / "tax-return-checklist.txt").unlink()
     settings = get_settings()
-    await sync_once(indexed["source_id"], indexed["root"], indexed["provider"], settings)
+    await sync_once(
+        indexed["source_id"], indexed["root"], indexed["provider"], settings, indexed["redis"]
+    )
     resp = await client.get("/search", params={"q": "ELSTER tax return"})
     assert all(r["path"] != "finance/tax-return-checklist.txt" for r in resp.json()["results"])
 
@@ -143,3 +154,29 @@ async def test_document_detail_locates_the_hit(client):
 
 async def test_unknown_document_is_404(client):
     assert (await client.get("/documents/999999999")).status_code == 404
+
+
+async def test_repeat_search_is_served_from_cache(client):
+    first = await client.get("/search", params={"q": "notice period for the tenant"})
+    second = await client.get("/search", params={"q": "Notice  period for the TENANT"})
+    assert first.headers["X-Cache"] == "MISS" and first.json()["cached"] is False
+    assert second.headers["X-Cache"] == "HIT" and second.json()["cached"] is True
+    assert second.json()["results"] == first.json()["results"]
+
+
+async def test_new_documents_invalidate_cached_results(indexed, client):
+    query = {"q": "sourdough starter feeding schedule"}
+    before = await client.get("/search", params=query)
+    assert all(r["path"] != "notes/baking.md" for r in before.json()["results"])
+
+    (indexed["root"] / "notes").mkdir(exist_ok=True)
+    (indexed["root"] / "notes" / "baking.md").write_text(
+        "# Baking\n\nFeed the sourdough starter twice a day on a fixed schedule."
+    )
+    await sync_once(
+        indexed["source_id"], indexed["root"], indexed["provider"], get_settings(), indexed["redis"]
+    )
+
+    after = await client.get("/search", params=query)
+    assert after.headers["X-Cache"] == "MISS"  # index version changed, old entry unused
+    assert after.json()["results"][0]["path"] == "notes/baking.md"
