@@ -11,8 +11,10 @@ import logging
 import signal
 from pathlib import Path
 
+from redis.asyncio import Redis
 from sqlalchemy import text
 
+from app.cache import publish_index_version
 from app.config import Settings, get_settings
 from app.connectors import local
 from app.db import dispose_engines, read_conn, write_conn
@@ -66,7 +68,11 @@ async def wait_until_ready(provider: EmbeddingProvider, stop: asyncio.Event) -> 
 
 
 async def sync_once(
-    source_id: int, root: Path, provider: EmbeddingProvider, settings: Settings
+    source_id: int,
+    root: Path,
+    provider: EmbeddingProvider,
+    settings: Settings,
+    redis: Redis | None = None,
 ) -> int:
     """One pass over the folder. Returns the number of documents changed."""
     async with read_conn() as conn:
@@ -128,6 +134,8 @@ async def sync_once(
 
     if changed:
         version = await bump_index_version()
+        if redis is not None:
+            await publish_index_version(redis, version)  # retires all cached search results
         log.info("sync done: %d changes, index version %d", changed, version)
     return changed
 
@@ -136,6 +144,7 @@ async def run() -> None:
     settings = get_settings()
     root = Path(settings.local_docs_dir)
     provider = make_provider(settings)
+    redis = Redis.from_url(settings.redis_url, socket_timeout=2)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -151,7 +160,7 @@ async def run() -> None:
         while not stop.is_set():
             try:
                 if await asyncio.to_thread(root.is_dir):
-                    await sync_once(source_id, root, provider, settings)
+                    await sync_once(source_id, root, provider, settings, redis)
                 else:
                     log.warning("docs folder %s does not exist; set LOCAL_DOCS_PATH", root)
             except Exception:  # e.g. database restarting: log and retry next round
@@ -160,6 +169,7 @@ async def run() -> None:
                 await asyncio.wait_for(stop.wait(), timeout=settings.sync_interval_seconds)
     finally:
         await provider.close()
+        await redis.aclose()
         await dispose_engines()
         log.info("worker stopped")
 

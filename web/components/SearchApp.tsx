@@ -146,6 +146,7 @@ function SearchMeta({ state, stats }: { state: State; stats: Stats | null }) {
     return (
       <>
         {n} {n === 1 ? "passage" : "passages"} in {Math.round(state.response.took_ms)} ms
+        {state.response.cached && ", from cache"}
       </>
     );
   }

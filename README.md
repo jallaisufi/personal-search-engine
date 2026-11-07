@@ -48,6 +48,7 @@ To index your own files, set `LOCAL_DOCS_PATH` in `.env` to a folder on your mac
 - **Ingestion.** The worker scans your folder, skips files whose modification time is unchanged (no read needed), and only re-indexes files whose content hash changed. Text is split into ~500-token chunks that never cross a heading or page boundary, so every result points to one exact location.
 - **Embedding reuse.** Each chunk's text is hashed. If identical text is already in the index (another copy of a document, or an unchanged section of an edited file), its vector is reused instead of calling the model again.
 - **Hybrid search.** One SQL query runs a vector search (HNSW index) and a full-text search (GIN index) and merges the two rankings with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf). Vectors find meaning ("raising the rent" ≈ "rent increase"); full-text finds exact tokens such as names, codes and acronyms that embeddings miss.
+- **Caching.** Redis caches query embeddings (the slowest step, a model call) and whole search results. Result keys include an index version that the worker bumps after every sync, so new documents invalidate all cached results at once without per-key deletes. Responses carry an `X-Cache: HIT|MISS` header, and `/api/stats` reports the hit rate. If Redis is down, search keeps working uncached.
 - **Read/write split.** Search runs on a read connection pool and ingestion on the primary, so the scaled setup can point reads at a Postgres replica without code changes.
 
 Design decisions are recorded in [`docs/adr/`](docs/adr).
@@ -59,7 +60,7 @@ Design decisions are recorded in [`docs/adr/`](docs/adr).
 | `GET /api/search?q=...&limit=10` | Ranked chunks with document, path, page, heading path, highlighted snippet, and whether each matched semantically, by keyword, or both |
 | `GET /api/documents?status=indexed` | Indexed documents with chunk counts and errors |
 | `GET /api/documents/{id}` | Document text plus each chunk's position, for the preview |
-| `GET /api/stats` | Document counts, chunk count, index version, embedding model |
+| `GET /api/stats` | Document counts, chunk count, index version, embedding model, search cache hit rate |
 | `GET /health` | Database and Redis health |
 
 ## Configuration
