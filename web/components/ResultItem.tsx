@@ -11,10 +11,13 @@ export default function ResultItem({
   result,
   selected,
   onOpen,
+  number,
 }: {
   result: SearchResult;
   selected: boolean;
   onOpen: () => void;
+  /** Source number in an answer; shown so citations like [2] can be matched up. */
+  number?: number;
 }) {
   const trail = headingTrail(result.heading_path);
   const why = WHY[[...result.matched_by].sort().join(",")];
@@ -28,7 +31,10 @@ export default function ResultItem({
         aria-label={`Open ${result.title} at this passage`}
         onClick={onOpen}
       >
-        <span className="result-title">{result.title}</span>
+        <span className="result-title">
+          {number !== undefined && <span className="source-number">{number}</span>}
+          {result.title}
+        </span>
         <span className="result-where">
           {trail.length > 0 && (
             <span className="trail">

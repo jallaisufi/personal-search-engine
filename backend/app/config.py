@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 32
     ollama_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+
+    # Ask mode: the model that writes answers from retrieved passages.
+    llm_provider: Literal["ollama", "openai", "anthropic", "fake"] = "ollama"
+    llm_model: str = "llama3.2:3b"
+    ask_sources: int = 6  # passages given to the model per question
 
     chunk_tokens: int = 500
     chunk_overlap_tokens: int = 50
@@ -37,6 +43,10 @@ class Settings(BaseSettings):
         # Fail fast at startup instead of on the first request.
         if self.embedding_provider == "openai" and not self.openai_api_key:
             raise ValueError("EMBEDDING_PROVIDER=openai requires OPENAI_API_KEY")
+        if self.llm_provider == "openai" and not self.openai_api_key:
+            raise ValueError("LLM_PROVIDER=openai requires OPENAI_API_KEY")
+        if self.llm_provider == "anthropic" and not self.anthropic_api_key:
+            raise ValueError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
         if self.chunk_overlap_tokens >= self.chunk_tokens:
             raise ValueError("CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_TOKENS")
         return self

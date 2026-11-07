@@ -4,6 +4,7 @@ Run locally:  docker compose up -d postgres && make test
 (with DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/search and migrations applied)
 """
 
+import json
 import shutil
 
 import httpx
@@ -14,6 +15,7 @@ from app.cache import SearchCache
 from app.config import get_settings
 from app.db import read_conn, write_conn
 from app.ingest.embed import FakeProvider
+from app.llm import FakeLLM
 from app.main import app
 from app.worker import check_embedding_model, ensure_local_source, sync_once
 from tests.fakes import InMemoryRedis
@@ -50,6 +52,7 @@ async def client(indexed):
     app.state.embedder = indexed["provider"]
     app.state.redis = indexed["redis"]
     app.state.cache = SearchCache(indexed["redis"], search_ttl_seconds=600)
+    app.state.llm = FakeLLM()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -180,3 +183,43 @@ async def test_new_documents_invalidate_cached_results(indexed, client):
     after = await client.get("/search", params=query)
     assert after.headers["X-Cache"] == "MISS"  # index version changed, old entry unused
     assert after.json()["results"][0]["path"] == "notes/baking.md"
+
+
+def parse_sse(body: str) -> list[tuple[str, dict | list]]:
+    events = []
+    for block in body.strip().split("\n\n"):
+        lines = dict(line.split(": ", 1) for line in block.splitlines())
+        events.append((lines["event"], json.loads(lines["data"])))
+    return events
+
+
+async def test_ask_streams_sources_then_a_cited_answer(client):
+    resp = await client.post("/ask", json={"question": "How much is the security deposit?"})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+    events = parse_sse(resp.text)
+    kinds = [kind for kind, _ in events]
+    assert kinds[0] == "sources" and kinds[-1] == "done"
+    assert set(kinds[1:-1]) == {"token"}
+
+    sources = events[0][1]
+    assert [s["n"] for s in sources] == list(range(1, len(sources) + 1))
+    answer = "".join(data["text"] for kind, data in events if kind == "token")
+    assert "[1]" in answer
+    assert events[-1][1]["cited"] == [1]
+    assert events[-1][1]["cached"] is False
+
+
+async def test_repeated_question_is_answered_from_cache(client):
+    question = {"question": "When is the design review for Project Atlas?"}
+    first = parse_sse((await client.post("/ask", json=question)).text)
+    second = parse_sse((await client.post("/ask", json=question)).text)
+    assert second[-1][1]["cached"] is True
+    first_answer = "".join(d["text"] for k, d in first if k == "token")
+    second_answer = "".join(d["text"] for k, d in second if k == "token")
+    assert first_answer == second_answer
+
+
+async def test_ask_rejects_empty_questions(client):
+    assert (await client.post("/ask", json={"question": ""})).status_code == 422

@@ -130,6 +130,7 @@ jobs:
       # No Ollama in CI: deterministic fake embeddings, no model download, no keys.
       COMPOSE_PROFILES: ""
       EMBEDDING_PROVIDER: fake
+      LLM_PROVIDER: fake
       SYNC_INTERVAL_SECONDS: "5"
     steps:
       - uses: actions/checkout@v4
@@ -152,7 +153,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=web
       - name: Start stack
         run: |
-          printf 'EMBEDDING_PROVIDER=fake\nSYNC_INTERVAL_SECONDS=5\nCOMPOSE_PROFILES=\n' > .env
+          printf 'EMBEDDING_PROVIDER=fake\nLLM_PROVIDER=fake\nSYNC_INTERVAL_SECONDS=5\nCOMPOSE_PROFILES=\n' > .env
           docker compose up -d --no-build
       - run: ./scripts/smoke_test.sh
       - name: Logs on failure
