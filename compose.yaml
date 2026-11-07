@@ -1,0 +1,100 @@
+# Lite mode: one of everything. `docker compose up -d`
+# Scaled mode (API/worker replicas + read replica) arrives in weekend 4 as compose.scaled.yaml.
+
+x-backend: &backend
+  build: ./backend
+  image: personal-search-backend:local
+  env_file:
+    - path: .env
+      required: false
+  environment: &backend-env
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-search}
+    # Lite mode reads from the primary; the scaled profile points this at the replica.
+    DATABASE_READ_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-search}
+    REDIS_URL: redis://redis:6379/0
+    LOCAL_DOCS_DIR: /data/docs
+
+services:
+  gateway:
+    image: nginx:1.27-alpine
+    ports: ["${GATEWAY_PORT:-8080}:80"]
+    volumes: ["./gateway/nginx.conf:/etc/nginx/nginx.conf:ro"]
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # One-shot: applies DB migrations before the API and worker start,
+  # so multiple API replicas never race on schema changes.
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  api:
+    <<: *backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker"]
+    volumes: ["${LOCAL_DOCS_PATH:-./sample-docs}:/data/docs:ro"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    # Loopback only, for running tests and psql from your machine.
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5433}:5432"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      POSTGRES_DB: ${POSTGRES_DB:-search}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-search}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ── Local AI (profile "local-ai", on by default via .env) ────────────────
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    volumes: ["ollama:/root/.ollama"]
+    restart: unless-stopped
+
+  # Pulls the embedding model once; later starts are instant (model is cached in the volume).
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["local-ai"]
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["/bin/sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}"]
+    depends_on: [ollama]
+    restart: "no"
+
+volumes:
+  pgdata: {}
+  ollama: {}
