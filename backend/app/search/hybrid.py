@@ -54,6 +54,7 @@ fused AS (
 SELECT f.id AS chunk_id, f.score, f.vec_rank, f.kw_rank,
        d.id AS document_id, d.title, d.external_id, d.web_url, d.mime_type,
        c.page, c.heading_path, c.char_start, c.char_end,
+       (SELECT max(c2.char_end) FROM chunks c2 WHERE c2.document_id = d.id) AS doc_length,
        ts_headline('simple', c.text, q.tsq, :headline_opts) AS snippet
 FROM fused f
 JOIN chunks c ON c.id = f.id
@@ -74,6 +75,7 @@ class SearchHit:
     heading_path: str | None
     char_start: int
     char_end: int
+    doc_length: int  # lets the UI show where in the document the passage sits
     snippet_html: str
     score: float
     matched_by: list[str]
@@ -124,6 +126,7 @@ async def hybrid_search(
                 heading_path=r.heading_path,
                 char_start=r.char_start,
                 char_end=r.char_end,
+                doc_length=r.doc_length,
                 snippet_html=_safe_snippet(r.snippet),
                 score=float(r.score),
                 matched_by=matched_by,
