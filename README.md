@@ -20,7 +20,11 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The first start downloads the embedding model (~270 MB) and indexes the files in `sample-docs/`. Then:
+The first start downloads the embedding model (~270 MB) and indexes the files in `sample-docs/`. Then open **<http://localhost:8080>** and search, for example, *security deposit* or *when is the design review*.
+
+Each result shows the document, section and page, plus a location bar showing where in the document the passage sits. Click a result to open the document scrolled to that passage.
+
+The API is available too:
 
 ```bash
 curl "http://localhost:8080/api/search?q=security%20deposit"
@@ -33,7 +37,8 @@ To index your own files, set `LOCAL_DOCS_PATH` in `.env` to a folder on your mac
 ## How it works
 
 ```
- Browser ─▶ Nginx gateway ─▶ FastAPI (stateless) ─▶ Postgres + pgvector
+ Browser ─▶ Nginx gateway ─┬─▶ Next.js web UI
+                           └─▶ FastAPI (stateless) ─▶ Postgres + pgvector
                                    │                        ▲
                                 Redis                       │ bulk writes
                                                             │
@@ -53,6 +58,7 @@ Design decisions are recorded in [`docs/adr/`](docs/adr).
 |---|---|
 | `GET /api/search?q=...&limit=10` | Ranked chunks with document, path, page, heading path, highlighted snippet, and whether each matched semantically, by keyword, or both |
 | `GET /api/documents?status=indexed` | Indexed documents with chunk counts and errors |
+| `GET /api/documents/{id}` | Document text plus each chunk's position, for the preview |
 | `GET /api/stats` | Document counts, chunk count, index version, embedding model |
 | `GET /health` | Database and Redis health |
 
@@ -80,6 +86,8 @@ make test        # all tests, against a separate test database in the compose Po
 make lint        # ruff
 make smoke       # end-to-end check against the running stack
 ```
+
+Working on the UI with hot reload: `cd web && npm install && API_URL=http://localhost:8080/api npm run dev`, then open <http://localhost:3000> (the rest of the stack keeps running in Docker).
 
 Tests use a deterministic fake embedding provider, so they need no model download, network or API key.
 

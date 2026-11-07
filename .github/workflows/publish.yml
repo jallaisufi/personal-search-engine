@@ -18,6 +18,9 @@ jobs:
   publish:
     if: github.event_name == 'push' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [backend, web]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +34,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/personal-search-backend
+          images: ghcr.io/${{ github.repository_owner }}/personal-search-${{ matrix.image }}
           tags: |
             type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' }}
             type=sha,prefix=sha-
@@ -39,9 +42,9 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
       - uses: docker/build-push-action@v6
         with:
-          context: backend
+          context: ${{ matrix.image }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

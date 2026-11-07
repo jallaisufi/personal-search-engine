@@ -33,4 +33,11 @@ if [[ "$top" != "apartment/lease-agreement.md" ]]; then
   exit 1
 fi
 echo "✓ search ranks the lease agreement first for 'security deposit'"
+
+if curl -fsS "$BASE/" | grep -q "Personal Search"; then
+  echo "✓ web UI is served by the gateway"
+else
+  echo "✗ web UI did not load at $BASE/"
+  exit 1
+fi
 echo "Smoke test passed."

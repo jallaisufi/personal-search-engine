@@ -127,3 +127,22 @@ def _split_long(
         if i + window >= len(words):
             break
     return spans
+
+
+def stitch_text(chunks: list[tuple[int, int, str]]) -> str:
+    """Rebuild a document's text from its (overlapping) chunks, keeping char offsets exact.
+
+    Chunks are ordered by start; overlaps are skipped and the gaps between chunks
+    (block separators) are filled with newlines of the same length.
+    """
+    parts: list[str] = []
+    pos = 0
+    for start, end, chunk_text in sorted(chunks):
+        if end <= pos:
+            continue
+        if start > pos:
+            parts.append("\n" * (start - pos))
+            pos = start
+        parts.append(chunk_text[pos - start :])
+        pos = end
+    return "".join(parts)

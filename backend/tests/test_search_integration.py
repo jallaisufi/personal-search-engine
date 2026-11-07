@@ -129,3 +129,17 @@ async def test_health_and_stats(client):
     stats = (await client.get("/stats")).json()
     assert stats["chunks"] > 0 and stats["index_version"] > 0
     assert stats["embedding_model"] == "fake-hash"
+
+
+async def test_document_detail_locates_the_hit(client):
+    hit = (await client.get("/search", params={"q": "security deposit"})).json()["results"][0]
+    assert 0 < hit["char_end"] <= hit["doc_length"]
+
+    doc = (await client.get(f"/documents/{hit['document_id']}")).json()
+    assert doc["path"] == hit["path"]
+    assert "security deposit" in doc["text"][hit["char_start"] : hit["char_end"]].lower()
+    assert any(c["id"] == hit["chunk_id"] for c in doc["chunks"])
+
+
+async def test_unknown_document_is_404(client):
+    assert (await client.get("/documents/999999999")).status_code == 404

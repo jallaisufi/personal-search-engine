@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import read_conn
+from app.ingest.chunk import stitch_text
 from app.ingest.embed import to_pgvector
 from app.search.hybrid import hybrid_search
 
@@ -25,6 +26,7 @@ class SearchResult(BaseModel):
     heading_path: str | None
     char_start: int
     char_end: int
+    doc_length: int
     snippet_html: str
     score: float
     matched_by: list[str]
@@ -45,6 +47,26 @@ class DocumentOut(BaseModel):
     modified_at: datetime | None
     indexed_at: datetime | None
     error: str | None
+
+
+class ChunkLocation(BaseModel):
+    id: int
+    char_start: int
+    char_end: int
+    page: int | None
+    heading_path: str | None
+
+
+class DocumentDetail(BaseModel):
+    id: int
+    title: str
+    path: str
+    web_url: str | None
+    mime_type: str | None
+    status: str
+    modified_at: datetime | None
+    text: str
+    chunks: list[ChunkLocation]
 
 
 class Stats(BaseModel):
@@ -128,6 +150,46 @@ async def documents(
             {"status": status},
         )
         return [DocumentOut(**r._mapping) for r in rows]
+
+
+@router.get("/documents/{document_id}", response_model=DocumentDetail)
+async def document_detail(document_id: int) -> DocumentDetail:
+    async with read_conn() as conn:
+        doc = (
+            await conn.execute(
+                text("""
+                SELECT id, title, external_id AS path, web_url, mime_type, status, modified_at
+                FROM documents WHERE id = :id
+                """),
+                {"id": document_id},
+            )
+        ).one_or_none()
+        if doc is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        rows = (
+            await conn.execute(
+                text("""
+                SELECT id, char_start, char_end, page, heading_path, text
+                FROM chunks WHERE document_id = :id ORDER BY char_start
+                """),
+                {"id": document_id},
+            )
+        ).all()
+
+    return DocumentDetail(
+        **doc._mapping,
+        text=stitch_text([(r.char_start, r.char_end, r.text) for r in rows]),
+        chunks=[
+            ChunkLocation(
+                id=r.id,
+                char_start=r.char_start,
+                char_end=r.char_end,
+                page=r.page,
+                heading_path=r.heading_path,
+            )
+            for r in rows
+        ],
+    )
 
 
 @router.get("/stats", response_model=Stats)

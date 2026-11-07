@@ -1,6 +1,6 @@
 import pytest
 
-from app.ingest.chunk import chunk_blocks, estimate_tokens, full_text
+from app.ingest.chunk import chunk_blocks, estimate_tokens, full_text, stitch_text
 from app.ingest.extract import Block
 
 
@@ -71,3 +71,12 @@ def test_overlap_must_be_smaller_than_chunk():
 
 def test_empty_document_has_no_chunks():
     assert chunk_blocks([], max_tokens=100, overlap_tokens=10) == []
+
+
+def test_stitch_text_rebuilds_the_document_exactly():
+    blocks = [Block(words(25, f"b{i}"), heading_path="S" if i < 4 else "T") for i in range(8)]
+    blocks.append(Block(" ".join(f"long{i}" for i in range(400))))
+    original = full_text(blocks)
+    chunks = chunk_blocks(blocks, max_tokens=80, overlap_tokens=35)
+    rebuilt = stitch_text([(c.char_start, c.char_end, c.text) for c in reversed(chunks)])
+    assert rebuilt == original

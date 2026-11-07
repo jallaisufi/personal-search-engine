@@ -17,6 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
+      web: ${{ steps.filter.outputs.web }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -29,6 +30,9 @@ jobs:
               - 'compose.yaml'
               - 'gateway/**'
               - 'scripts/**'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
               - '.github/workflows/ci.yml'
 
   lint:
@@ -81,8 +85,36 @@ jobs:
           name: coverage
           path: backend/coverage.xml
 
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund
+          else npm install --no-audit --no-fund; fi
+      - run: npm run typecheck
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+      - name: Upload lockfile (when the repo doesn't have one yet)
+        if: hashFiles('web/package-lock.json') == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-lock
+          path: web/package-lock.json
+
   smoke:
-    needs: [lint, test]
+    needs: [lint, test, web]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-latest
     env:
       # No Ollama in CI: deterministic fake embeddings, no model download, no keys.
@@ -98,8 +130,16 @@ jobs:
           context: backend
           load: true
           tags: personal-search-backend:local
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          load: true
+          tags: personal-search-web:local
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
       - name: Start stack
         run: |
           printf 'EMBEDDING_PROVIDER=fake\nSYNC_INTERVAL_SECONDS=5\nCOMPOSE_PROFILES=\n' > .env
