@@ -91,13 +91,13 @@ services:
     volumes: ["ollama:/root/.ollama"]
     restart: unless-stopped
 
-  # Pulls the embedding model once; later starts are instant (model is cached in the volume).
+  # Pulls the embedding and chat models once; later starts are instant (cached in the volume).
   ollama-pull:
     image: ollama/ollama:latest
     profiles: ["local-ai"]
     environment:
       OLLAMA_HOST: ollama:11434
-    entrypoint: ["/bin/sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull ${EMBEDDING_MODEL:-nomic-embed-text}"]
+    entrypoint: ["/bin/sh", "-c", "until ollama list >/dev/null 2>&1; do sleep 1; done; ollama pull ${EMBEDDING_MODEL:-nomic-embed-text} && if [ \"${LLM_PROVIDER:-ollama}\" = ollama ]; then ollama pull ${LLM_MODEL:-llama3.2:3b}; fi"]
     depends_on: [ollama]
     restart: "no"
 

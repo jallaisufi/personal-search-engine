@@ -5,6 +5,7 @@ import pytest
 
 # Tests never call a real model: deterministic fake embeddings, small chunks.
 os.environ["EMBEDDING_PROVIDER"] = "fake"
+os.environ["LLM_PROVIDER"] = "fake"
 os.environ.setdefault("EMBEDDING_DIM", "768")
 os.environ.setdefault("CHUNK_TOKENS", "120")
 os.environ.setdefault("CHUNK_OVERLAP_TOKENS", "20")

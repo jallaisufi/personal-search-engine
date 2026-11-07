@@ -96,3 +96,57 @@ export const api = {
 export function headingTrail(path: string | null): string[] {
   return path ? path.split(" > ") : [];
 }
+
+export type Source = SearchResult & { n: number };
+
+export type AskEvent =
+  | { event: "sources"; data: Source[] }
+  | { event: "token"; data: { text: string } }
+  | { event: "done"; data: { cited: number[]; took_ms: number; cached: boolean } }
+  | { event: "error"; data: { message: string } };
+
+/** POST /api/ask and call `onEvent` for each server-sent event as it arrives. */
+export async function askStream(
+  question: string,
+  onEvent: (event: AskEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ question }),
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new ApiError("The answer service didn't respond. Check that the stack is running.");
+  }
+  if (response.status === 429) {
+    throw new ApiError("Too many questions in a short time. Wait a moment and ask again.", 429);
+  }
+  if (!response.ok || !response.body) {
+    throw new ApiError(`The answer service returned an error (${response.status}).`, response.status);
+  }
+
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += value;
+    let boundary: number;
+    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let event = "";
+      let data = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) event = line.slice(7);
+        else if (line.startsWith("data: ")) data += line.slice(6);
+      }
+      if (event && data) onEvent({ event, data: JSON.parse(data) } as AskEvent);
+    }
+  }
+}

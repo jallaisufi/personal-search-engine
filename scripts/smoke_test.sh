@@ -34,6 +34,14 @@ if [[ "$top" != "apartment/lease-agreement.md" ]]; then
 fi
 echo "✓ search ranks the lease agreement first for 'security deposit'"
 
+if curl -fsS -N -X POST "$BASE/api/ask" -H 'Content-Type: application/json' \
+    -d '{"question":"How much is the security deposit?"}' | grep -q "^event: done"; then
+  echo "✓ Ask mode streams an answer through the gateway"
+else
+  echo "✗ Ask mode did not finish an answer"
+  exit 1
+fi
+
 if curl -fsS "$BASE/" | grep -q "Personal Search"; then
   echo "✓ web UI is served by the gateway"
 else

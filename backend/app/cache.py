@@ -87,6 +87,17 @@ class SearchCache:
     async def set_search(self, key: str, results: list[dict]) -> None:
         await self._safe(self.redis.set(key, json.dumps(results), ex=self.search_ttl))
 
+    # ── generic JSON entries (Ask mode answers) ──────────────────────────
+    def key(self, prefix: str, version: int, params: dict[str, Any]) -> str:
+        return f"{prefix}:v{version}:{_digest(params)}"
+
+    async def get_json(self, key: str) -> Any:
+        raw = await self._safe(self.redis.get(key))
+        return json.loads(raw) if raw is not None else None
+
+    async def set_json(self, key: str, value: Any) -> None:
+        await self._safe(self.redis.set(key, json.dumps(value), ex=self.search_ttl))
+
     async def hit_rate(self) -> dict[str, float | int]:
         hits, misses = await self._safe(self.redis.mget(HITS_KEY, MISSES_KEY), [None, None])
         hits, misses = int(hits or 0), int(misses or 0)
