@@ -98,15 +98,16 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
+        id: install
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund
-          else npm install --no-audit --no-fund; fi
+          else npm install --no-audit --no-fund; echo "generated-lockfile=true" >> "$GITHUB_OUTPUT"; fi
       - run: npm run typecheck
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: "1"
       - name: Upload lockfile (when the repo doesn't have one yet)
-        if: hashFiles('web/package-lock.json') == ''
+        if: steps.install.outputs.generated-lockfile == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: package-lock
