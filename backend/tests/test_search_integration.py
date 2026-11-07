@@ -223,3 +223,18 @@ async def test_repeated_question_is_answered_from_cache(client):
 
 async def test_ask_rejects_empty_questions(client):
     assert (await client.post("/ask", json={"question": ""})).status_code == 422
+
+
+async def test_full_questions_also_match_keywords(client):
+    """Regression: the keyword leg used to AND every word, so questions never matched it."""
+    resp = await client.get("/search", params={"q": "When is the design review for Project Atlas?"})
+    top = resp.json()["results"][0]
+    assert top["path"] == "work/project-atlas-kickoff.md"
+    assert "keyword" in top["matched_by"]
+    assert "<mark>" in top["snippet_html"]
+
+
+async def test_stopword_only_query_still_returns_semantic_results(client):
+    resp = await client.get("/search", params={"q": "what is the"})
+    assert resp.status_code == 200
+    assert all(r["matched_by"] == ["semantic"] for r in resp.json()["results"])

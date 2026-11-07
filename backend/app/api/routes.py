@@ -18,7 +18,7 @@ from app.db import read_conn
 from app.ingest.chunk import stitch_text
 from app.ingest.embed import to_pgvector
 from app.llm import LLMError, LLMProvider
-from app.search.hybrid import hybrid_search
+from app.search.hybrid import SEARCH_ALGORITHM_VERSION, hybrid_search
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,7 +137,13 @@ async def run_search(request: Request, query: str, limit: int) -> tuple[list[dic
     version = await cache.index_version(load_index_version)
     key = cache.search_key(
         version,
-        {"q": query, "limit": limit, "k": settings.rrf_k, "n": settings.search_candidates},
+        {
+            "q": query,
+            "limit": limit,
+            "k": settings.rrf_k,
+            "n": settings.search_candidates,
+            "algo": SEARCH_ALGORITHM_VERSION,
+        },
     )
     if (cached := await cache.get_search(key)) is not None:
         return cached, True
