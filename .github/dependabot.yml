@@ -1,19 +1,50 @@
 version: 2
+
+# Minor and patch updates arrive automatically (grouped into one PR per ecosystem).
+# Major versions of languages, frameworks and base images are skipped: those are
+# planned upgrades, done deliberately. Security updates are not affected by `ignore`.
 updates:
   - package-ecosystem: pip
     directory: /backend
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
-  - package-ecosystem: github-actions
-    directory: /
-    schedule: { interval: weekly }
-  - package-ecosystem: docker
-    directory: /backend
-    schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      python:
+        patterns: ["*"]
+
   - package-ecosystem: npm
     directory: /web
     schedule: { interval: weekly }
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      web:
+        patterns: ["*"]
+
+  # Base images: stay on Python 3.12 and Node 22 (LTS); only patch-level image updates.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
   - package-ecosystem: docker
     directory: /web
     schedule: { interval: weekly }
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  # Actions are versioned by major tag (v4, v5), so majors stay enabled here.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions:
+        patterns: ["*"]
