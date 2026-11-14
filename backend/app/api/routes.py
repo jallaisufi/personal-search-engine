@@ -18,6 +18,7 @@ from app.db import read_conn
 from app.ingest.chunk import stitch_text
 from app.ingest.embed import to_pgvector
 from app.llm import LLMError, LLMProvider
+from app.queue import queue_depth
 from app.search.hybrid import SEARCH_ALGORITHM_VERSION, hybrid_search
 
 log = logging.getLogger(__name__)
@@ -84,12 +85,19 @@ class CacheStats(BaseModel):
     hit_rate: float
 
 
+class QueueStats(BaseModel):
+    waiting: int  # queued or being indexed right now
+    retrying: int  # failed, waiting for the next attempt
+    dead: int  # gave up after all attempts
+
+
 class Stats(BaseModel):
     documents: dict[str, int]
     chunks: int
     index_version: int
     embedding_model: str | None
     search_cache: CacheStats
+    ingest_queue: QueueStats
 
 
 @router.get("/")
@@ -353,4 +361,5 @@ async def stats(request: Request) -> Stats:
         index_version=state.version,
         embedding_model=state.embedding_model,
         search_cache=CacheStats(**await request.app.state.cache.hit_rate()),
+        ingest_queue=QueueStats(**await queue_depth(request.app.state.redis)),
     )

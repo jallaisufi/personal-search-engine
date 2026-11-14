@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     local_docs_dir: str = "./sample-docs"
     sync_interval_seconds: int = 60
 
+    # Ingestion queue
+    ingest_batch_size: int = 8  # jobs a worker takes per read
+    ingest_max_attempts: int = 3  # then the document is marked failed (dead letter)
+    ingest_retry_base_seconds: float = 30  # backoff: 30 s, 2 min, 8 min, ...
+
     embedding_provider: Literal["ollama", "openai", "fake"] = "ollama"
     embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 768
