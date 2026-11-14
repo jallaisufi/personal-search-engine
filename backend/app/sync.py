@@ -19,7 +19,7 @@ from app.config import Settings
 from app.connectors import local
 from app.connectors.gdrive import SUPPORTED, DriveClient, DriveFile, GoogleOAuth
 from app.crypto import Cipher
-from app.db import read_conn, write_conn
+from app.db import primary_engine, read_conn, write_conn
 from app.deadlines import extract_deadlines
 from app.ingest.embed import EmbeddingProvider
 from app.ingest.pipeline import (
@@ -334,7 +334,12 @@ async def publish_changes(redis: Redis | None) -> int:
     """Bump the index version so every cached search result is retired."""
     version = await bump_index_version()
     if redis is not None:
-        await publish_index_version(redis, version)
+        # Read after the commit: a replica that has replayed up to here has this batch.
+        async with primary_engine().connect() as conn:
+            lsn = (
+                await conn.execute(text("SELECT CAST(pg_current_wal_lsn() AS text)"))
+            ).scalar_one()
+        await publish_index_version(redis, version, lsn)
     return version
 
 

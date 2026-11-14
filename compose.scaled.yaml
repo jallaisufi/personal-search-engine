@@ -1,0 +1,61 @@
+# Scaled mode: load-balanced API replicas, more workers, and a Postgres read replica.
+#
+#   docker compose -f compose.yaml -f compose.scaled.yaml up -d
+#
+# or set COMPOSE_FILE=compose.yaml:compose.scaled.yaml in .env and use plain
+# `docker compose up -d`. On Windows use ";" instead of ":" in COMPOSE_FILE.
+#
+# On one machine all replicas share the same CPU and disk, so this demonstrates the
+# architecture more than it adds capacity. See "Scaled mode" in the README.
+
+services:
+  api:
+    deploy:
+      replicas: ${API_REPLICAS:-3}
+    environment:
+      # Searches read from the replica; everything that writes uses the primary.
+      DATABASE_READ_URL: postgresql+asyncpg://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres-replica:5432/${POSTGRES_DB:-search}
+    depends_on:
+      postgres-replica: { condition: service_healthy }
+
+  worker:
+    deploy:
+      replicas: ${WORKER_REPLICAS:-4}
+
+  postgres:
+    # Adds the replication rule to client authentication, keeps enough WAL for a
+    # replica that was briefly offline, and allows more connections for the replicas.
+    command:
+      - postgres
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - wal_keep_size=512MB
+      - -c
+      - max_connections=${PG_MAX_CONNECTIONS:-200}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+
+  postgres-replica:
+    image: pgvector/pgvector:pg16 # same image as the primary, so pgvector is available
+    entrypoint: ["bash", "/replica-entrypoint.sh"]
+    environment:
+      PRIMARY_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app}
+      PG_MAX_CONNECTIONS: ${PG_MAX_CONNECTIONS:-200}
+    volumes:
+      - pgreplica:/var/lib/postgresql/data
+      - ./db/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-search}"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+
+volumes:
+  pgreplica: {}

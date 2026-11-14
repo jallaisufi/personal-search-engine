@@ -68,6 +68,53 @@ Things to know:
 - **Disconnect** removes the account, its stored token and its documents from the index. Nothing is ever changed in Drive.
 - If you use a different host or port, change `GOOGLE_REDIRECT_URI` and the redirect URI in the Google client to match.
 
+## Scaled mode
+
+The default ("lite") runs one of everything, which is right for one person on a laptop. Scaled mode runs the same code as a small cluster:
+
+```bash
+docker compose -f compose.yaml -f compose.scaled.yaml up -d    # or: make up-scaled
+```
+
+```
+                 ┌──▶ api 1 ─┐          ┌──▶ Postgres replica   (searches read here)
+ Nginx gateway ──┼──▶ api 2 ─┼──────────┤          ▲ WAL streaming
+ (round robin)   └──▶ api 3 ─┘          └──▶ Postgres primary   (ingestion writes here)
+                                                   ▲
+ Scheduler ─▶ Redis job queue ─▶ 4 workers ────────┘
+```
+
+| | Lite | Scaled |
+|---|---|---|
+| API | 1 container | 3 behind the Nginx load balancer (`API_REPLICAS`) |
+| Workers | 1 | 4 sharing the job queue (`WORKER_REPLICAS`) |
+| Postgres | primary | primary + streaming read replica |
+| Searches read from | primary | replica, once it has caught up with the latest ingest |
+
+To make it the default, set `COMPOSE_FILE=compose.yaml:compose.scaled.yaml` in `.env` (on Windows use `;` instead of `:`). If your `.env` still has `WORKER_REPLICAS=1` from an earlier version, remove that line to get four workers.
+
+What this demonstrates, and what it doesn't: the API and workers are stateless, so they scale by adding containers, and the database scales reads by adding replicas. On a single machine all of them share the same CPU cores and disk, so the gain is limited by the hardware. The architecture is what carries over to several machines.
+
+`GET /api/stats` shows whether searches read from a replica and how far behind it is; every response carries `X-Served-By` with the API replica that answered. `make smoke-scaled` verifies load balancing, replication and reads from the replica.
+
+## Benchmarks
+
+Load tests use [k6](https://k6.io/) and run with `make bench` (see [`bench/README.md`](bench/README.md)).
+
+Measured in CI on a shared GitHub-hosted runner (`ubuntu-latest`), 20 concurrent users for 20 seconds, the six sample documents, and the deterministic test embedding provider. So these numbers cover the gateway, API, cache and database path, not the embedding model, and the index is tiny. Treat them as a direction, and run `make bench` on your own hardware and documents for real figures.
+
+| Scenario | Mode | Requests/s | p50 | p95 | p99 | Cache hits | Failed |
+|---|---|---:|---:|---:|---:|---:|---:|
+| cold search (every query unique) | lite | 516 | 36.0 ms | 58.0 ms | 75.0 ms | 0% | 0.00% |
+| cold search (every query unique) | scaled | 550 | 32.0 ms | 67.6 ms | 118.0 ms | 0% | 0.00% |
+| warm search (repeated queries) | lite | 1838 | 10.4 ms | 13.3 ms | 15.9 ms | 100% | 0.00% |
+| warm search (repeated queries) | scaled | 2476 | 7.0 ms | 15.8 ms | 24.6 ms | 100% | 0.00% |
+
+What they show:
+
+- **Caching:** a cached search is served about 3.5× faster than an uncached one (p50 36 ms → 10 ms in lite mode), with 3.6× the throughput. With a real embedding model the gap is larger, because a cache hit also skips the model call.
+- **Scaling on one machine:** three API replicas raise cached throughput by about a third (1838 → 2476 requests/s) and uncached throughput by 7%, while tail latency (p99) gets worse. That is the expected result when 3 API containers, 2 databases and the load generator share the same few CPU cores: more processes help until the cores are full, then they compete. The replicas pay off when they run on separate machines.
+
 ## How it works
 
 ```
@@ -88,7 +135,7 @@ Things to know:
 - **Deadline extraction in two stages.** Stage 1 is plain code: it parses dates (English and German, with or without a year) and keeps only sentences that contain a date and a cue word such as "due", "by" or "Frist". Only those passages go to the language model in stage 2, which decides whether each date is a real deadline and words the task. The model may only pick from the dates stage 1 parsed, so it can describe a deadline but never invent or shift its date. On the sample documents most passages never reach the model; `/api/stats` reports the share. Extraction runs as its own queue job after indexing, so a slow model never delays search.
 - **Ask mode (RAG).** The question runs through the same cached hybrid search; the top passages go to a language model with instructions to answer only from them and cite each one as [n]. The answer streams to the browser as server-sent events. Repeated questions are served from cache. The local default model is small (`llama3.2:3b`, ~2 GB) so it runs on a laptop; set an OpenAI or Anthropic key for better answers.
 - **Caching.** Redis caches query embeddings (the slowest step, a model call) and whole search results. Result keys include an index version that the worker bumps after every sync, so new documents invalidate all cached results at once without per-key deletes. Responses carry an `X-Cache: HIT|MISS` header, and `/api/stats` reports the hit rate. If Redis is down, search keeps working uncached.
-- **Read/write split.** Search runs on a read connection pool and ingestion on the primary, so the scaled setup can point reads at a Postgres replica without code changes.
+- **Read/write split and replica lag.** Search reads from a separate connection pool; in scaled mode that pool points at a streaming replica while ingestion writes to the primary. A replica is always a moment behind, so each ingest batch records the primary's WAL position, and search uses the replica only once it has replayed past it (until then it reads the primary). If the replica is down, reads fall back to the primary.
 
 Design decisions are recorded in [`docs/adr/`](docs/adr).
 
@@ -132,6 +179,8 @@ make test-unit   # fast tests, no database needed
 make test        # all tests, against a separate test database in the compose Postgres
 make lint        # ruff
 make smoke       # end-to-end check against the running stack
+make up-scaled   # API replicas, more workers, Postgres read replica
+make bench       # load test the running stack
 ```
 
 Working on the UI with hot reload: `cd web && npm install && API_URL=http://localhost:8080/api npm run dev`, then open <http://localhost:3000> (the rest of the stack keeps running in Docker).
@@ -147,7 +196,7 @@ Every push and pull request runs lint, unit and integration tests against real P
 - [x] **Weekend 1 — Core search:** Docker Compose stack, PDF/DOCX/Markdown ingestion with page and heading tracking, embedding reuse, hybrid search with RRF, CI/CD
 - [x] **Weekend 2 — Usable product:** Next.js UI with highlighted results and document preview, Ask mode (answers with citations), Redis caching
 - [x] **Weekend 3 — Google Drive + deadlines:** Redis Streams job queue with retries and dead letters, Google Drive OAuth + incremental sync via the Changes API, two-stage deadline extraction with a deadlines page
-- [ ] **Weekend 4 — Prove it:** scaled profile (API/worker replicas, Postgres read replica), k6 load tests, benchmark results in this README
+- [x] **Weekend 4 — Prove it:** scaled mode (load-balanced API replicas, more workers, Postgres read replica with lag-aware reads), k6 load tests
 
 Later: email/iCal deadline reminders, Prometheus + Grafana, reranking and a search-quality eval set, more connectors, OCR.
 
