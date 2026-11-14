@@ -1,5 +1,5 @@
 # One image for api, worker and migrate; compose picks the command.
-FROM python:3.12-slim AS base
+FROM python:3.15-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
