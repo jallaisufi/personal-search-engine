@@ -465,6 +465,66 @@ mark {
   font-weight: 600;
 }
 
+.sources {
+  margin-top: 2rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.sources h2 {
+  font-size: var(--step-0);
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+.sources p {
+  margin: 0.5rem 0 0;
+}
+
+.notice {
+  border-left: 3px solid var(--highlight);
+  padding-left: 0.75rem;
+}
+
+.accounts {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.accounts li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.account-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.button {
+  display: inline-block;
+  font-size: var(--step--1);
+  font-weight: 500;
+  color: var(--page);
+  background: var(--ink);
+  border-radius: var(--radius);
+  padding: 0.35rem 0.8rem;
+  text-decoration: none;
+}
+
+.button:hover {
+  background: var(--link);
+}
+
 .table-wrap {
   overflow-x: auto;
   margin-top: 1.5rem;

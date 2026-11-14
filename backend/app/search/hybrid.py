@@ -89,13 +89,16 @@ fused AS (
     LIMIT :limit
 )
 SELECT f.id AS chunk_id, f.score, f.vec_rank, f.kw_rank,
-       d.id AS document_id, d.title, d.external_id, d.web_url, d.mime_type,
+       d.id AS document_id, d.title, d.web_url, d.mime_type,
+       CASE WHEN s.kind = 'gdrive' THEN 'Google Drive (' || s.name || ')'
+            ELSE d.external_id END AS external_id,
        c.page, c.heading_path, c.char_start, c.char_end,
        (SELECT max(c2.char_end) FROM chunks c2 WHERE c2.document_id = d.id) AS doc_length,
        COALESCE(ts_headline('simple', c.text, q.tsq, :headline_opts), left(c.text, 240)) AS snippet
 FROM fused f
 JOIN chunks c ON c.id = f.id
 JOIN documents d ON d.id = c.document_id
+JOIN sources s ON s.id = d.source_id
 CROSS JOIN q
 ORDER BY f.score DESC
 """)

@@ -50,7 +50,15 @@ export default function DocumentsTable() {
           {docs.map((doc) => (
             <tr key={doc.id}>
               <td>
-                <div>{doc.title}</div>
+                <div>
+                  {doc.web_url ? (
+                    <a href={doc.web_url} target="_blank" rel="noreferrer">
+                      {doc.title}
+                    </a>
+                  ) : (
+                    doc.title
+                  )}
+                </div>
                 <div className="path">{doc.path}</div>
               </td>
               <td className={doc.status === "failed" ? "status-failed" : undefined}>

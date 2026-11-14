@@ -36,6 +36,32 @@ Interactive API docs: <http://localhost:8080/docs>
 
 To index your own files, set `LOCAL_DOCS_PATH` in `.env` to a folder on your machine and run `docker compose up -d` again. The folder is mounted read-only.
 
+## Connect Google Drive (optional)
+
+Search your Drive next to your local files: PDFs, Word files, text and Markdown files, and Google Docs. Access is read-only, and after the first sync only changed files are fetched.
+
+Because this is self-hosted, you create your own Google OAuth client once (free, about 10 minutes):
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project.
+2. Under **APIs & Services → Library**, enable the **Google Drive API**.
+3. Under **Google Auth Platform**, fill in the app name and your email, choose audience **External**, and add your own Google address as a **test user**.
+4. Under **Clients**, create an OAuth client of type **Web application** with this authorised redirect URI:
+   `http://localhost:8080/api/sources/gdrive/callback`
+5. Put the client ID and secret into `.env`, together with an encryption key for the stored token:
+   ```bash
+   GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   ENCRYPTION_KEY=   # python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+6. Run `docker compose up -d`, open **Documents**, and click **Connect Google Drive**.
+
+Things to know:
+
+- Google shows a "Google hasn't verified this app" screen, because the client is your own. Continue under *Advanced*.
+- While the app's publishing status is **Testing**, Google expires the sign-in after about 7 days; the Documents page then shows **Reconnect**. To avoid that, set the status to **In production** under *Audience* (see [Manage App Audience](https://support.google.com/cloud/answer/15549945)).
+- **Disconnect** removes the account, its stored token and its documents from the index. Nothing is ever changed in Drive.
+- If you use a different host or port, change `GOOGLE_REDIRECT_URI` and the redirect URI in the Google client to match.
+
 ## How it works
 
 ```
@@ -49,6 +75,7 @@ To index your own files, set `LOCAL_DOCS_PATH` in `.env` to a folder on your mac
 ```
 
 - **Ingestion.** The scheduler scans your folder, skips files whose modification time is unchanged (no read needed), and queues a job only for files whose content hash changed. Text is split into ~500-token chunks that never cross a heading or page boundary, so every result points to one exact location.
+- **Google Drive sync.** The first sync lists the Drive once; after that the scheduler asks Drive's Changes API only for what changed since the saved cursor, so a sync costs the same whether the Drive holds 50 files or 50,000. Renames and views don't trigger re-indexing (the content checksum is compared). Google Docs are exported as Markdown so headings survive. The refresh token is stored encrypted, and only the read-only scope is requested.
 - **Job queue.** Jobs go through a Redis Streams consumer group, so any number of workers share the work and each document is indexed by exactly one of them (`WORKER_REPLICAS=3` in `.env`). A failed document is retried with exponential backoff and ends in a dead-letter list after three attempts; a job whose worker crashed is picked up by another worker. `/api/stats` shows how many jobs are waiting, retrying and dead.
 - **Embedding reuse.** Each chunk's text is hashed. If identical text is already in the index (another copy of a document, or an unchanged section of an edited file), its vector is reused instead of calling the model again.
 - **Hybrid search.** One SQL query runs a vector search (HNSW index) and a full-text search (GIN index) and merges the two rankings with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf). Vectors find meaning ("raising the rent" ≈ "rent increase"); full-text finds exact tokens such as names, codes and acronyms that embeddings miss.
@@ -66,6 +93,8 @@ Design decisions are recorded in [`docs/adr/`](docs/adr).
 | `POST /api/ask` `{"question": "..."}` | Streamed answer (server-sent events): `sources`, then `token`s, then `done` with the citations used |
 | `GET /api/documents?status=indexed` | Indexed documents with chunk counts and errors |
 | `GET /api/documents/{id}` | Document text plus each chunk's position, for the preview |
+| `GET /api/sources` | Connected sources with document counts, last sync and sync errors |
+| `GET /api/sources/gdrive/connect` | Starts the Google sign-in; `DELETE /api/sources/{id}` disconnects an account |
 | `GET /api/stats` | Document counts, chunk count, index version, embedding model, search cache hit rate, indexing queue depth |
 | `GET /health` | Database and Redis health |
 
@@ -79,6 +108,7 @@ Everything is configured in `.env` (see [`.env.example`](.env.example)).
 | `EMBEDDING_PROVIDER` | `ollama` | `ollama` (local, free), `openai` (your own key), `fake` (tests) |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Changing it requires `make reindex` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `ollama` / `llama3.2:3b` | Model for Ask mode: `ollama`, `openai`, `anthropic`, `fake` |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `ENCRYPTION_KEY` | unset | Enable Google Drive (see above) |
 | `WORKER_REPLICAS` | `1` | Number of indexing workers sharing the job queue |
 | `COMPOSE_PROFILES` | `local-ai` | Remove to skip running Ollama when you use an API provider |
 | `CHUNK_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `500` / `50` | Chunk size and overlap |

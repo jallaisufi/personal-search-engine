@@ -43,6 +43,7 @@ class Job:
     content_hash: str
     modified_at: str | None  # ISO 8601
     attempt: int = 0
+    web_url: str | None = None  # link to open the original (Drive)
 
     def dumps(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
