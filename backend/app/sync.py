@@ -20,6 +20,7 @@ from app.connectors import local
 from app.connectors.gdrive import SUPPORTED, DriveClient, DriveFile, GoogleOAuth
 from app.crypto import Cipher
 from app.db import read_conn, write_conn
+from app.deadlines import extract_deadlines
 from app.ingest.embed import EmbeddingProvider
 from app.ingest.pipeline import (
     DocumentInput,
@@ -28,6 +29,7 @@ from app.ingest.pipeline import (
     ingest_file,
     mark_failed,
 )
+from app.llm import LLMProvider
 from app.queue import Job
 
 log = logging.getLogger(__name__)
@@ -342,12 +344,14 @@ async def sync_once(
     provider: EmbeddingProvider,
     settings: Settings,
     redis: Redis | None = None,
+    llm: LLMProvider | None = None,
 ) -> int:
     """Plan and index inline, without the queue. Returns the number of documents changed."""
     jobs, removed = await plan_local(source_id, root)
     for job in jobs:
         try:
-            await index_job(job, root, provider, settings)
+            if await index_job(job, root, provider, settings) and llm is not None:
+                await extract_deadlines(job.source_id, job.external_id, llm, redis)
         except Exception as exc:  # one bad file must not stop the sync
             log.exception("failed to index %s", job.external_id)
             await mark_failed(job_document(job), f"{type(exc).__name__}: {exc}")

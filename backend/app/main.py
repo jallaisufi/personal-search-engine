@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from redis.asyncio import Redis
 
+from app.api.deadlines import router as deadlines_router
 from app.api.routes import router
 from app.api.sources import router as sources_router
 from app.cache import SearchCache
@@ -56,3 +57,4 @@ async def timing(request: Request, call_next) -> Response:
 
 app.include_router(router)
 app.include_router(sources_router)
+app.include_router(deadlines_router)

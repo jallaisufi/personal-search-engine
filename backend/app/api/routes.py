@@ -15,6 +15,7 @@ from app.ask import SYSTEM_PROMPT, build_user_prompt, cited_numbers
 from app.cache import SearchCache
 from app.config import get_settings
 from app.db import read_conn
+from app.deadlines import extraction_stats
 from app.ingest.chunk import stitch_text
 from app.ingest.embed import to_pgvector
 from app.llm import LLMError, LLMProvider
@@ -92,6 +93,12 @@ class QueueStats(BaseModel):
     dead: int  # gave up after all attempts
 
 
+class DeadlineStats(BaseModel):
+    passages_scanned: int
+    passages_sent_to_model: int  # the rest were ruled out by the date + cue-word filter
+    share_sent_to_model: float
+
+
 class Stats(BaseModel):
     documents: dict[str, int]
     chunks: int
@@ -99,6 +106,7 @@ class Stats(BaseModel):
     embedding_model: str | None
     search_cache: CacheStats
     ingest_queue: QueueStats
+    deadline_extraction: DeadlineStats
 
 
 @router.get("/")
@@ -106,7 +114,15 @@ async def root() -> dict:
     return {
         "name": "personal-search",
         "version": "0.1.0",
-        "endpoints": ["/search?q=...", "POST /ask", "/documents", "/sources", "/stats", "/health"],
+        "endpoints": [
+            "/search?q=...",
+            "POST /ask",
+            "/deadlines",
+            "/documents",
+            "/sources",
+            "/stats",
+            "/health",
+        ],
     }
 
 
@@ -368,4 +384,5 @@ async def stats(request: Request) -> Stats:
         embedding_model=state.embedding_model,
         search_cache=CacheStats(**await request.app.state.cache.hit_rate()),
         ingest_queue=QueueStats(**await queue_depth(request.app.state.redis)),
+        deadline_extraction=DeadlineStats(**await extraction_stats(request.app.state.redis)),
     )

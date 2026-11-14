@@ -465,6 +465,91 @@ mark {
   font-weight: 600;
 }
 
+/* ── Deadlines page ──────────────────────────────────────────────────────── */
+.page-title {
+  font-size: var(--step-2);
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  font-size: var(--step--1);
+  color: var(--muted);
+}
+
+.deadlines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 720px;
+}
+
+.deadline {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  gap: 0.25rem 1.5rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.deadline-when {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0.75rem;
+}
+
+.deadline-date {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.deadline-soon {
+  font-size: var(--step--1);
+  font-weight: 600;
+  width: fit-content;
+  padding: 0 0.3em;
+  background: var(--highlight);
+  color: var(--highlight-ink);
+  border-radius: 2px;
+}
+
+.deadline-what {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.deadline-what .result-open {
+  flex: 1;
+  margin: 0;
+}
+
+.deadline-what .close-button {
+  margin-top: 0.75rem;
+}
+
+.deadline-what .result-snippet {
+  margin: 0.25rem 0;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  .deadline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .deadline-when {
+    flex-direction: row;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding-top: 0;
+  }
+}
+
 .sources {
   margin-top: 2rem;
   padding: 1rem 1.25rem;
