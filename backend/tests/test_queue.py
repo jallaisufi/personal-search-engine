@@ -8,7 +8,8 @@ from redis.asyncio import Redis
 
 from app.queue import IngestQueue, Job, queue_depth
 
-pytestmark = pytest.mark.redis
+# One event loop for tests and fixtures, so the Redis connection is closed where it was opened.
+pytestmark = [pytest.mark.redis, pytest.mark.asyncio(loop_scope="session")]
 
 
 def job(name: str = "notes/a.md", content_hash: str = "h1") -> Job:
