@@ -14,7 +14,7 @@ from sqlalchemy import text
 from app.ask import SYSTEM_PROMPT, build_user_prompt, cited_numbers
 from app.cache import SearchCache
 from app.config import get_settings
-from app.db import read_conn
+from app.db import read_conn, replica_gate, replication_status
 from app.deadlines import extraction_stats
 from app.ingest.chunk import stitch_text
 from app.ingest.embed import to_pgvector
@@ -93,6 +93,12 @@ class QueueStats(BaseModel):
     dead: int  # gave up after all attempts
 
 
+class DatabaseStats(BaseModel):
+    read_replica: bool  # searches read from a replica (scaled mode)
+    replica_streaming: bool | None
+    replica_lag_seconds: float | None
+
+
 class DeadlineStats(BaseModel):
     passages_scanned: int
     passages_sent_to_model: int  # the rest were ruled out by the date + cue-word filter
@@ -107,6 +113,7 @@ class Stats(BaseModel):
     search_cache: CacheStats
     ingest_queue: QueueStats
     deadline_extraction: DeadlineStats
+    database: DatabaseStats
 
 
 @router.get("/")
@@ -180,7 +187,8 @@ async def run_search(request: Request, query: str, limit: int) -> tuple[list[dic
         await cache.set_embedding(embedder.model, query, vector)
 
     # 3. Run the hybrid search on the read connection.
-    async with read_conn() as conn:
+    # ...on the replica once it has caught up with this index version, else on the primary.
+    async with replica_gate.connect(version, await cache.index_lsn()) as conn:
         hits = await hybrid_search(
             conn,
             query,
@@ -385,4 +393,5 @@ async def stats(request: Request) -> Stats:
         search_cache=CacheStats(**await request.app.state.cache.hit_rate()),
         ingest_queue=QueueStats(**await queue_depth(request.app.state.redis)),
         deadline_extraction=DeadlineStats(**await extraction_stats(request.app.state.redis)),
+        database=DatabaseStats(**await replication_status()),
     )

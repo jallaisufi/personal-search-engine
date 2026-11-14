@@ -22,4 +22,4 @@ Queries are normalised (case, whitespace) before hashing, so trivial variations 
 - No per-key invalidation logic and no scans over Redis keys; correctness depends on one integer.
 - Any ingest invalidates the whole result cache, even for unrelated queries. For a personal index that changes a few times a day this costs little; a high-churn index would want finer-grained versions.
 - Redis is optional at runtime: every cache call is wrapped so that an outage degrades to uncached search.
-- Known gap for the scaled setup: if the worker publishes a new version before the read replica has replayed the new rows, a search could cache results from the replica's older state under the new version for up to the TTL. Weekend 4 handles this together with replication lag (e.g. publish the version only once the replica has caught up).
+- In scaled mode a read replica lags the primary, so "version N" results must not be computed from a replica that hasn't replayed version N's data. [ADR 008](008-scaled-mode-and-replica-lag.md) closes that gap by publishing the primary's WAL position together with the version.

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     # Read-only traffic (search) goes here. Same as primary in lite mode.
     database_read_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
+    # Connections per process and database. Total = processes x (size + overflow);
+    # keep it below Postgres max_connections (100 by default, 200 in scaled mode).
+    db_pool_size: int = 5
+    db_pool_overflow: int = 5
 
     local_docs_dir: str = "./sample-docs"
     sync_interval_seconds: int = 60

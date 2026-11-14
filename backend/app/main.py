@@ -1,4 +1,5 @@
 import logging
+import socket
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,6 +17,8 @@ from app.crypto import Cipher
 from app.db import dispose_engines
 from app.ingest.embed import make_provider
 from app.llm import make_llm
+
+HOSTNAME = socket.gethostname()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -52,6 +55,7 @@ async def timing(request: Request, call_next) -> Response:
     started = time.perf_counter()
     response = await call_next(request)
     response.headers["X-Response-Time-Ms"] = f"{(time.perf_counter() - started) * 1000:.1f}"
+    response.headers["X-Served-By"] = HOSTNAME  # which API replica answered
     return response
 
 

@@ -23,6 +23,7 @@ from redis.asyncio import Redis
 log = logging.getLogger(__name__)
 
 INDEX_VERSION_KEY = "index:version"
+INDEX_LSN_KEY = "index:lsn"  # primary WAL position when that version was published
 HITS_KEY = "stats:search_cache:hits"
 MISSES_KEY = "stats:search_cache:misses"
 EMBEDDING_TTL_SECONDS = 7 * 24 * 3600
@@ -58,6 +59,11 @@ class SearchCache:
         version = await load_from_db()
         await self._safe(self.redis.set(INDEX_VERSION_KEY, version))
         return version
+
+    async def index_lsn(self) -> str | None:
+        """WAL position a read replica must have replayed to serve the current version."""
+        value = await self._safe(self.redis.get(INDEX_LSN_KEY))
+        return value.decode() if isinstance(value, bytes) else value
 
     # ── query embeddings ─────────────────────────────────────────────────
     def _embedding_key(self, model: str, query: str) -> str:
@@ -109,9 +115,15 @@ class SearchCache:
         }
 
 
-async def publish_index_version(redis: Redis, version: int) -> None:
-    """Called by the worker after a batch; instantly retires all cached results."""
+async def publish_index_version(redis: Redis, version: int, lsn: str | None = None) -> None:
+    """Called by the worker after a batch; instantly retires all cached results.
+
+    The WAL position is stored first, so an API that sees the new version can always
+    check whether its read replica has caught up with it.
+    """
     try:
+        if lsn is not None:
+            await redis.set(INDEX_LSN_KEY, lsn)
         await redis.set(INDEX_VERSION_KEY, version)
     except Exception as exc:  # noqa: BLE001
         log.warning("could not publish index version to redis: %s", exc)
