@@ -141,12 +141,24 @@ class AnthropicLLM:
 
 
 class FakeLLM:
-    """Answers with the first sentence of source [1], cited. No model, no network."""
+    """Deterministic stand-in for tests and CI. No model, no network.
+
+    Questions are answered with the first sentence of source [1], cited.
+    """
 
     model = "fake-llm"
     _first_source = re.compile(r"\[1\][^\n]*\n(.+?(?:[.!?](?=\s)|$))", re.DOTALL)
 
+    _listed_date = re.compile(r'^- (\d{4}-\d{2}-\d{2}) \| "(.*)"$', re.MULTILINE)
+
     async def stream(self, system: str, user: str) -> AsyncIterator[str]:
+        if "Dates found:" in user:  # deadline extraction: every listed date, quoted as its task
+            found = [
+                {"date": day, "task": quote.rstrip(".")}
+                for day, quote in self._listed_date.findall(user)
+            ]
+            yield json.dumps({"deadlines": found})
+            return
         match = self._first_source.search(user)
         if not match:
             yield "I couldn't find this in your documents."

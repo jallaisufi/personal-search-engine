@@ -42,6 +42,12 @@ else
   exit 1
 fi
 
+has_deadlines() {
+  curl -fsS "$BASE/api/deadlines?include_past=true" \
+    | python3 -c 'import sys,json; sys.exit(0 if len(json.load(sys.stdin)) >= 5 else 1)'
+}
+wait_for "deadlines extracted from the sample documents" has_deadlines
+
 if curl -fsS "$BASE/" | grep -q "Personal Search"; then
   echo "✓ web UI is served by the gateway"
 else

@@ -29,6 +29,11 @@ class InMemoryRedis:
         self.data[key] = self._bytes(value)
         return value
 
+    async def incrby(self, key: str, amount: int) -> int:
+        value = int(self.data.get(key, b"0")) + amount
+        self.data[key] = self._bytes(value)
+        return value
+
     async def mget(self, *keys: str) -> list[bytes | None]:
         return [self.data.get(k) for k in keys]
 

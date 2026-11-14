@@ -63,6 +63,28 @@ export type Stats = {
   embedding_model: string | null;
 };
 
+export type Deadline = {
+  id: number;
+  /** What has to be done, written by the model. */
+  task: string;
+  /** YYYY-MM-DD, parsed from the document (never produced by the model). */
+  due_on: string;
+  /** Negative when the date has passed. */
+  days_left: number;
+  /** The sentence the deadline comes from. */
+  quote: string;
+  document_id: number;
+  title: string;
+  path: string;
+  web_url: string | null;
+  chunk_id: number;
+  page: number | null;
+  heading_path: string | null;
+  char_start: number;
+  char_end: number;
+  doc_length: number;
+};
+
 export type ConnectedSource = {
   id: number;
   kind: "local" | "gdrive";
@@ -108,6 +130,14 @@ export const api = {
   documents: () => get<DocumentSummary[]>("/documents"),
   stats: () => get<Stats>("/stats"),
   sources: () => get<SourcesResponse>("/sources"),
+  deadlines: (includePast: boolean) =>
+    get<Deadline[]>(`/deadlines?include_past=${includePast ? "true" : "false"}`),
+  dismissDeadline: async (id: number) => {
+    const response = await fetch(`/api/deadlines/${id}/dismiss`, { method: "POST" });
+    if (!response.ok) {
+      throw new ApiError(`The deadline couldn't be removed (${response.status}).`);
+    }
+  },
   disconnectSource: async (id: number) => {
     const response = await fetch(`/api/sources/${id}`, { method: "DELETE" });
     if (!response.ok) {

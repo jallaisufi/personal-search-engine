@@ -44,6 +44,7 @@ class Job:
     modified_at: str | None  # ISO 8601
     attempt: int = 0
     web_url: str | None = None  # link to open the original (Drive)
+    task: str = "index"  # "index" the document, or extract its "deadlines" afterwards
 
     def dumps(self) -> str:
         return json.dumps(asdict(self), sort_keys=True)
@@ -96,7 +97,7 @@ class IngestQueue:
     # ── producing ────────────────────────────────────────────────────────
     def _dedup_key(self, job: Job) -> str:
         doc = hashlib.sha256(f"{job.source_id}:{job.external_id}".encode()).hexdigest()[:24]
-        return f"{self.prefix}:queued:{doc}:{job.content_hash[:16]}"
+        return f"{self.prefix}:queued:{job.task}:{doc}:{job.content_hash[:16]}"
 
     async def enqueue(self, job: Job) -> bool:
         """Add a job unless the same document version is already queued or in flight."""
@@ -137,11 +138,11 @@ class IngestQueue:
         await self._ack(message)
         await self.redis.delete(self._dedup_key(message.job))
 
-    async def failed(self, message: Message, error: str) -> bool:
+    async def failed(self, message: Message, error: str, max_attempts: int | None = None) -> bool:
         """Schedule a retry with exponential backoff. Returns False once attempts are used up
         (the job then goes to the dead-letter stream and the caller marks the document failed)."""
         job = replace(message.job, attempt=message.job.attempt + 1)
-        if job.attempt >= self.max_attempts:
+        if job.attempt >= (max_attempts or self.max_attempts):
             await self.redis.xadd(
                 self.dead,
                 {"job": job.dumps(), "error": error[:500], "failed_at": str(int(time.time()))},

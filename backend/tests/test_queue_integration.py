@@ -10,6 +10,7 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.db import read_conn, write_conn
 from app.ingest.embed import FakeProvider
+from app.llm import FakeLLM
 from app.queue import IngestQueue, queue_depth
 from app.scheduler import scan_once
 from app.sync import check_embedding_model, ensure_local_source
@@ -40,8 +41,8 @@ async def stack(tmp_path):
         async def scan(self) -> int:
             return await scan_once(source_id, tmp_path, queue, redis)
 
-        async def work(self) -> int:
-            return await run_batch(queue, tmp_path, provider, settings, redis, block_ms=10)
+        async def work(self, llm=None) -> int:
+            return await run_batch(queue, tmp_path, provider, settings, redis, llm=llm, block_ms=10)
 
         async def depth(self) -> dict[str, int]:
             return await queue_depth(redis, prefix)
@@ -116,3 +117,20 @@ async def test_deleted_files_leave_the_index(stack):
     (stack.root / "gone.md").unlink()
     await stack.scan()
     assert "gone.md" not in await statuses()
+
+
+async def test_deadlines_are_extracted_by_a_follow_up_job(stack):
+    (stack.root / "lease.md").write_text("# Lease\n\nSend the signed lease by 1 December 2026.")
+    llm = FakeLLM()
+
+    await stack.scan()
+    assert await stack.work(llm) == 1  # the indexing job, which queues the deadlines job
+    assert (await stack.depth())["waiting"] == 1
+    assert await stack.work(llm) == 1  # the deadlines job
+    assert await stack.depth() == {"waiting": 0, "retrying": 0, "dead": 0}
+
+    async with read_conn() as conn:
+        rows = (await conn.execute(text("SELECT due_on, quote FROM deadlines"))).all()
+    assert [(str(r.due_on), r.quote) for r in rows] == [
+        ("2026-12-01", "Send the signed lease by 1 December 2026.")
+    ]

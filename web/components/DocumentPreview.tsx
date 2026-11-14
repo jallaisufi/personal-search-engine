@@ -34,7 +34,7 @@ export default function DocumentPreview({
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       passageRef.current?.scrollIntoView({ block: "center", behavior: reduce ? "auto" : "smooth" });
     }
-  }, [doc, hit.chunk_id, hit.document_id]);
+  }, [doc, hit.chunk_id, hit.document_id, hit.char_start]);
 
   useEffect(() => {
     closeRef.current?.focus({ preventScroll: true });
