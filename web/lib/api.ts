@@ -29,6 +29,8 @@ export type DocumentSummary = {
   id: number;
   title: string;
   path: string;
+  /** Link to open the original, for Google Drive documents. */
+  web_url: string | null;
   status: "pending" | "indexed" | "failed";
   chunks: number;
   modified_at: string | null;
@@ -61,6 +63,21 @@ export type Stats = {
   embedding_model: string | null;
 };
 
+export type ConnectedSource = {
+  id: number;
+  kind: "local" | "gdrive";
+  name: string;
+  documents: number;
+  last_synced: string | null;
+  /** Why the last sync failed, e.g. access was revoked. */
+  error: string | null;
+};
+
+export type SourcesResponse = {
+  google_drive_configured: boolean;
+  sources: ConnectedSource[];
+};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -90,6 +107,13 @@ export const api = {
   document: (id: number, signal?: AbortSignal) => get<DocumentDetail>(`/documents/${id}`, signal),
   documents: () => get<DocumentSummary[]>("/documents"),
   stats: () => get<Stats>("/stats"),
+  sources: () => get<SourcesResponse>("/sources"),
+  disconnectSource: async (id: number) => {
+    const response = await fetch(`/api/sources/${id}`, { method: "DELETE" });
+    if (!response.ok) {
+      throw new ApiError(`The account couldn't be disconnected (${response.status}).`);
+    }
+  },
 };
 
 /** "Lease > Rent and Payments" → ["Lease", "Rent and Payments"] */

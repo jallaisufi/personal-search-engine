@@ -152,8 +152,9 @@ async def mark_pending(doc: DocumentInput) -> None:
             VALUES (:source_id, :external_id, :title, :mime_type, :web_url,
                     :content_hash, :modified_at, 'pending')
             ON CONFLICT (source_id, external_id) DO UPDATE SET
-                content_hash = EXCLUDED.content_hash, modified_at = EXCLUDED.modified_at,
-                status = 'pending', error = NULL
+                title = EXCLUDED.title, mime_type = EXCLUDED.mime_type,
+                web_url = EXCLUDED.web_url, content_hash = EXCLUDED.content_hash,
+                modified_at = EXCLUDED.modified_at, status = 'pending', error = NULL
             """),
             doc.__dict__,
         )

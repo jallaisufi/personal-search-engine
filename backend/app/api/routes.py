@@ -52,6 +52,7 @@ class DocumentOut(BaseModel):
     id: int
     title: str
     path: str
+    web_url: str | None
     status: str
     chunks: int
     modified_at: datetime | None
@@ -105,7 +106,7 @@ async def root() -> dict:
     return {
         "name": "personal-search",
         "version": "0.1.0",
-        "endpoints": ["/search?q=...", "POST /ask", "/documents", "/stats", "/health", "/docs"],
+        "endpoints": ["/search?q=...", "POST /ask", "/documents", "/sources", "/stats", "/health"],
     }
 
 
@@ -288,11 +289,14 @@ async def documents(
     async with read_conn() as conn:
         rows = await conn.execute(
             text("""
-            SELECT d.id, d.title, d.external_id AS path, d.status, d.modified_at,
-                   d.indexed_at, d.error, count(c.id) AS chunks
-            FROM documents d LEFT JOIN chunks c ON c.document_id = d.id
+            SELECT d.id, d.title, d.status, d.modified_at, d.web_url,
+                   d.indexed_at, d.error, count(c.id) AS chunks,
+                   CASE WHEN s.kind = 'gdrive' THEN 'Google Drive (' || s.name || ')'
+            ELSE d.external_id END AS path
+            FROM documents d JOIN sources s ON s.id = d.source_id
+            LEFT JOIN chunks c ON c.document_id = d.id
             WHERE CAST(:status AS text) IS NULL OR d.status = :status
-            GROUP BY d.id
+            GROUP BY d.id, s.id
             ORDER BY d.title
             """),
             {"status": status},
@@ -306,8 +310,10 @@ async def document_detail(document_id: int) -> DocumentDetail:
         doc = (
             await conn.execute(
                 text("""
-                SELECT id, title, external_id AS path, web_url, mime_type, status, modified_at
-                FROM documents WHERE id = :id
+                SELECT d.id, d.title, d.web_url, d.mime_type, d.status, d.modified_at,
+                       CASE WHEN s.kind = 'gdrive' THEN 'Google Drive (' || s.name || ')'
+            ELSE d.external_id END AS path
+                FROM documents d JOIN sources s ON s.id = d.source_id WHERE d.id = :id
                 """),
                 {"id": document_id},
             )

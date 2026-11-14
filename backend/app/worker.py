@@ -18,7 +18,14 @@ from app.db import dispose_engines
 from app.ingest.embed import EmbeddingProvider, make_provider
 from app.ingest.pipeline import mark_failed
 from app.queue import IngestQueue, Message
-from app.sync import check_embedding_model, index_job, job_document, publish_changes
+from app.sync import (
+    DriveRegistry,
+    check_embedding_model,
+    index_job,
+    job_document,
+    make_drives,
+    publish_changes,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("worker")
@@ -38,11 +45,12 @@ async def handle(
     root: Path,
     provider: EmbeddingProvider,
     settings: Settings,
+    drives: DriveRegistry | None = None,
 ) -> bool:
     """Run one job. Returns True when the index changed."""
     job = message.job
     try:
-        stats = await index_job(job, root, provider, settings)
+        stats = await index_job(job, root, provider, settings, drives)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         attempt = job.attempt + 1
@@ -66,13 +74,14 @@ async def run_batch(
     settings: Settings,
     redis: Redis | None,
     *,
+    drives: DriveRegistry | None = None,
     block_ms: int = 2000,
 ) -> int:
     """Read and run one batch of jobs. Returns how many jobs were read."""
     messages = await queue.read(count=settings.ingest_batch_size, block_ms=block_ms)
     changed = 0
     for message in messages:
-        changed += await handle(queue, message, root, provider, settings)
+        changed += await handle(queue, message, root, provider, settings, drives)
     if changed:
         version = await publish_changes(redis)  # once per batch, not once per document
         log.info("batch done: %d documents indexed, index version %d", changed, version)
@@ -91,6 +100,8 @@ async def run() -> None:
         retry_base_seconds=settings.ingest_retry_base_seconds,
     )
 
+    drives = make_drives(settings)
+
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -104,12 +115,14 @@ async def run() -> None:
 
         while not stop.is_set():
             try:
-                await run_batch(queue, root, provider, settings, redis)
+                await run_batch(queue, root, provider, settings, redis, drives=drives)
             except Exception:  # e.g. Redis or the database restarting
                 log.exception("batch failed; retrying shortly")
                 await asyncio.sleep(2)
     finally:
         await provider.close()
+        if drives is not None:
+            await drives.oauth.close()
         await redis.aclose()
         await dispose_engines()
         log.info("worker stopped")

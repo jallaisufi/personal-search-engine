@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     local_docs_dir: str = "./sample-docs"
     sync_interval_seconds: int = 60
 
+    # Google Drive (optional). Each self-hoster creates their own OAuth client.
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    google_redirect_uri: str = "http://localhost:8080/api/sources/gdrive/callback"
+    encryption_key: str | None = None  # encrypts stored OAuth tokens
+    drive_max_file_mb: int = 50  # larger files are skipped
+
     # Ingestion queue
     ingest_batch_size: int = 8  # jobs a worker takes per read
     ingest_max_attempts: int = 3  # then the document is marked failed (dead letter)
@@ -52,6 +59,10 @@ class Settings(BaseSettings):
             raise ValueError("LLM_PROVIDER=openai requires OPENAI_API_KEY")
         if self.llm_provider == "anthropic" and not self.anthropic_api_key:
             raise ValueError("LLM_PROVIDER=anthropic requires ANTHROPIC_API_KEY")
+        if self.google_client_id and not (self.google_client_secret and self.encryption_key):
+            raise ValueError(
+                "Google Drive needs GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and ENCRYPTION_KEY"
+            )
         if self.chunk_overlap_tokens >= self.chunk_tokens:
             raise ValueError("CHUNK_OVERLAP_TOKENS must be smaller than CHUNK_TOKENS")
         return self
