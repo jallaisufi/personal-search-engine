@@ -17,7 +17,7 @@ from app.db import read_conn, write_conn
 from app.ingest.embed import FakeProvider
 from app.llm import FakeLLM
 from app.main import app
-from app.worker import check_embedding_model, ensure_local_source, sync_once
+from app.sync import check_embedding_model, ensure_local_source, sync_once
 from tests.fakes import InMemoryRedis
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio(loop_scope="session")]

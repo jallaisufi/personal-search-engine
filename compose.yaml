@@ -51,10 +51,23 @@ services:
       retries: 20
     restart: unless-stopped
 
+  # Exactly one scheduler: finds new and changed documents and queues a job for each.
+  scheduler:
+    <<: *backend
+    command: ["python", "-m", "app.scheduler"]
+    volumes: ["${LOCAL_DOCS_PATH:-./sample-docs}:/data/docs:ro"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Any number of workers: they share the queue, each job goes to exactly one of them.
   worker:
     <<: *backend
     command: ["python", "-m", "app.worker"]
     volumes: ["${LOCAL_DOCS_PATH:-./sample-docs}:/data/docs:ro"]
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
@@ -78,6 +91,11 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Append-only file, so queued indexing jobs survive a restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redisdata:/data"]
+    # Loopback only, for running tests from your machine.
+    ports: ["127.0.0.1:${REDIS_PORT:-6380}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -103,4 +121,5 @@ services:
 
 volumes:
   pgdata: {}
+  redisdata: {}
   ollama: {}

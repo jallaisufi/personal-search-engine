@@ -44,4 +44,7 @@ select = ["E", "F", "I", "B", "UP", "SIM", "ASYNC"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-markers = ["integration: needs a running Postgres with pgvector (DATABASE_URL)"]
+markers = [
+  "integration: needs a running Postgres with pgvector (DATABASE_URL)",
+  "redis: needs a running Redis (REDIS_URL)",
+]

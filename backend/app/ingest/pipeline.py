@@ -142,14 +142,31 @@ async def ingest_file(
     )
 
 
+async def mark_pending(doc: DocumentInput) -> None:
+    """Record that a document is queued. Existing chunks stay searchable until it is re-indexed."""
+    async with write_conn() as conn:
+        await conn.execute(
+            text("""
+            INSERT INTO documents (source_id, external_id, title, mime_type, web_url,
+                                   content_hash, modified_at, status)
+            VALUES (:source_id, :external_id, :title, :mime_type, :web_url,
+                    :content_hash, :modified_at, 'pending')
+            ON CONFLICT (source_id, external_id) DO UPDATE SET
+                content_hash = EXCLUDED.content_hash, modified_at = EXCLUDED.modified_at,
+                status = 'pending', error = NULL
+            """),
+            doc.__dict__,
+        )
+
+
 async def mark_failed(doc: DocumentInput, error: str) -> None:
     async with write_conn() as conn:
         await conn.execute(
             text("""
-            INSERT INTO documents (source_id, external_id, title, mime_type, content_hash,
-                                   modified_at, status, error)
-            VALUES (:source_id, :external_id, :title, :mime_type, :content_hash,
-                    :modified_at, 'failed', :error)
+            INSERT INTO documents (source_id, external_id, title, mime_type, web_url,
+                                   content_hash, modified_at, status, error)
+            VALUES (:source_id, :external_id, :title, :mime_type, :web_url,
+                    :content_hash, :modified_at, 'failed', :error)
             ON CONFLICT (source_id, external_id) DO UPDATE SET
                 content_hash = EXCLUDED.content_hash, modified_at = EXCLUDED.modified_at,
                 status = 'failed', error = EXCLUDED.error

@@ -41,13 +41,15 @@ To index your own files, set `LOCAL_DOCS_PATH` in `.env` to a folder on your mac
 ```
  Browser ─▶ Nginx gateway ─┬─▶ Next.js web UI
                            └─▶ FastAPI (stateless) ─▶ Postgres + pgvector
-                                   │                        ▲
-                                Redis                       │ bulk writes
-                                                            │
- Your folder ─▶ Worker: extract → chunk → embed (Ollama) ───┘
+                                   │ cache                  ▲
+                                 Redis                      │ bulk writes
+                                   ▲ job queue              │
+ Your folder ─▶ Scheduler ─────────┴─▶ Workers ─────────────┘
+                                       (extract → chunk → embed)
 ```
 
-- **Ingestion.** The worker scans your folder, skips files whose modification time is unchanged (no read needed), and only re-indexes files whose content hash changed. Text is split into ~500-token chunks that never cross a heading or page boundary, so every result points to one exact location.
+- **Ingestion.** The scheduler scans your folder, skips files whose modification time is unchanged (no read needed), and queues a job only for files whose content hash changed. Text is split into ~500-token chunks that never cross a heading or page boundary, so every result points to one exact location.
+- **Job queue.** Jobs go through a Redis Streams consumer group, so any number of workers share the work and each document is indexed by exactly one of them (`WORKER_REPLICAS=3` in `.env`). A failed document is retried with exponential backoff and ends in a dead-letter list after three attempts; a job whose worker crashed is picked up by another worker. `/api/stats` shows how many jobs are waiting, retrying and dead.
 - **Embedding reuse.** Each chunk's text is hashed. If identical text is already in the index (another copy of a document, or an unchanged section of an edited file), its vector is reused instead of calling the model again.
 - **Hybrid search.** One SQL query runs a vector search (HNSW index) and a full-text search (GIN index) and merges the two rankings with [Reciprocal Rank Fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf). Vectors find meaning ("raising the rent" ≈ "rent increase"); full-text finds exact tokens such as names, codes and acronyms that embeddings miss.
 - **Ask mode (RAG).** The question runs through the same cached hybrid search; the top passages go to a language model with instructions to answer only from them and cite each one as [n]. The answer streams to the browser as server-sent events. Repeated questions are served from cache. The local default model is small (`llama3.2:3b`, ~2 GB) so it runs on a laptop; set an OpenAI or Anthropic key for better answers.
@@ -64,7 +66,7 @@ Design decisions are recorded in [`docs/adr/`](docs/adr).
 | `POST /api/ask` `{"question": "..."}` | Streamed answer (server-sent events): `sources`, then `token`s, then `done` with the citations used |
 | `GET /api/documents?status=indexed` | Indexed documents with chunk counts and errors |
 | `GET /api/documents/{id}` | Document text plus each chunk's position, for the preview |
-| `GET /api/stats` | Document counts, chunk count, index version, embedding model, search cache hit rate |
+| `GET /api/stats` | Document counts, chunk count, index version, embedding model, search cache hit rate, indexing queue depth |
 | `GET /health` | Database and Redis health |
 
 ## Configuration
@@ -77,6 +79,7 @@ Everything is configured in `.env` (see [`.env.example`](.env.example)).
 | `EMBEDDING_PROVIDER` | `ollama` | `ollama` (local, free), `openai` (your own key), `fake` (tests) |
 | `EMBEDDING_MODEL` | `nomic-embed-text` | Changing it requires `make reindex` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `ollama` / `llama3.2:3b` | Model for Ask mode: `ollama`, `openai`, `anthropic`, `fake` |
+| `WORKER_REPLICAS` | `1` | Number of indexing workers sharing the job queue |
 | `COMPOSE_PROFILES` | `local-ai` | Remove to skip running Ollama when you use an API provider |
 | `CHUNK_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `500` / `50` | Chunk size and overlap |
 
@@ -86,7 +89,7 @@ Everything is configured in `.env` (see [`.env.example`](.env.example)).
 
 ```bash
 make up          # start the stack
-make logs        # follow api + worker logs
+make logs        # follow api, scheduler and worker logs
 make test-unit   # fast tests, no database needed
 make test        # all tests, against a separate test database in the compose Postgres
 make lint        # ruff
